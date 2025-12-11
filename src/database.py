@@ -1,7 +1,10 @@
-from typing import Optional, Union
-import pandas as pd
+import os
 import sqlite3
-
+import pandas as pd
+import logging
+import subprocess
+import datetime
+from typing import Optional, Union
 
 def local_query(db_path: str, query: str, params: Optional[tuple] = None) -> pd.DataFrame:
     """
@@ -65,3 +68,77 @@ def load_dataframe(db_path: str, table_name: str, df: pd.DataFrame, if_exists: s
     except Exception as e:
         print(f"Failed to load DataFrame into table '{table_name}': {e}")
         return False
+
+def get_last_backup_timestamp(backup_dir: str) -> Optional[str]:
+    """
+    Gets the timestamp from the last backup file in a directory.
+    Backup format: YYYY-MM-DD-HH-MM-SS.sql
+    Returns timestamp string without extension or None.
+    """
+    try:
+        backups = [f for f in os.listdir(backup_dir) if f not in ('.', '..')]
+    except Exception:
+        return None
+        
+    if not backups:
+        return None
+    
+    # Filter for valid backup files
+    valid_backups = []
+    for f in backups:
+        if f.endswith(".sql"):
+            try:
+                # Validate format roughly
+                parts = f.replace(".sql", "").split("-")
+                if len(parts) == 6:
+                    valid_backups.append(f)
+            except:
+                pass
+                
+    if not valid_backups:
+        return None
+        
+    valid_backups.sort()
+    last_backup = valid_backups[-1]
+    
+    # Return filename without extension
+    return last_backup.replace(".sql", "")
+
+def backup_database(backup_dir: str, database_file: str) -> str:
+    """Backs up the database to a SQL file."""
+    if not os.path.exists(backup_dir):
+        os.makedirs(backup_dir)
+        
+    current_datetime = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    backup_file = os.path.join(backup_dir, f"{current_datetime}.sql")
+    
+    command = f"sqlite3 '{database_file}' .dump > '{backup_file}'"
+    
+    try:
+        subprocess.check_call(command, shell=True)
+        logging.info(f"Database backed up to {backup_file}")
+        return "success"
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Backup failed: {e}")
+        return "failure"
+
+def load_backup_into_db(backup_path: str, database_file: str) -> str:
+    """Loads a SQL backup into a database file."""
+    
+    # Remove existing database file if it exists
+    if os.path.exists(database_file):
+        try:
+            os.remove(database_file)
+        except OSError as e:
+            print(f"Failed to remove existing database: {e}")
+            return "failure"
+    
+    # Load backup
+    command = f"sqlite3 {database_file} < {backup_path}"
+    
+    try:
+        subprocess.check_call(command, shell=True)
+        return "success"
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to load backup: {e}")
+        return "failure"
